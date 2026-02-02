@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PocketBase Realtime Chat — Channels, Reactions, Edit/Delete</title>
+<style>
+  :root{--bg:#0b0d0f;--panel:#0f1316;--muted:#97a0a8;--accent:#5865f2;--card:#111316;--text:#e6eef3;--muted-2:#8b98a3}
+  *{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#050607);color:var(--text)}
+  .app{display:grid;grid-template-columns:220px 1fr;gap:12px;height:100vh;padding:12px}
+  .sidebar{background:var(--panel);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px}
+  .channels{display:flex;flex-direction:column;gap:6px;overflow:auto;padding-right:6px}
+  .channel-btn{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:transparent;border:none;color:var(--muted);cursor:pointer;text-align:left}
+  .channel-btn.active{background:linear-gradient(90deg,rgba(88,101,242,0.12),transparent);color:var(--text);border:1px solid rgba(88,101,242,0.12)}
+  .channel-create{display:flex;gap:8px}
+  .channel-input{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+  .btn{background:var(--accent);color:white;border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+  .ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+  .main{display:flex;flex-direction:column;gap:12px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .search{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+  .username-input{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+  .chat-window{flex:1;display:flex;flex-direction:column;background:var(--card);border-radius:10px;overflow:hidden}
+  .messages{padding:14px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:10px}
+  .message{padding:10px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);display:flex;flex-direction:column;gap:8px;position:relative}
+  .meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:.85rem}
+  .meta .time{margin-left:auto;color:var(--muted-2);font-size:.8rem}
+  .text{white-space:pre-wrap;color:var(--text);font-size:1rem}
+  .edited{color:var(--muted-2);font-size:.8rem;margin-left:6px}
+  .message-actions{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+  .icon-btn{background:transparent;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:6px}
+  .icon-btn:hover{color:var(--text);background:rgba(255,255,255,0.02)}
+  .reactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .reaction-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;background:rgba(255,255,255,0.02);color:var(--text);font-size:.95rem;cursor:pointer;border:1px solid rgba(255,255,255,0.02)}
+  .reaction-chip.self{outline:2px solid rgba(88,101,242,0.18)}
+  .reaction-chip .count{opacity:.9;color:var(--muted-2);font-size:.85rem;margin-left:4px}
+  .composer{padding:12px;border-top:1px solid rgba(255,255,255,0.02);display:flex;gap:8px;align-items:center}
+  .compose-input{flex:1;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text);min-height:44px}
+  .badge{background:rgba(255,255,255,0.03);color:var(--muted);padding:6px 8px;border-radius:999px;font-size:.85rem}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:999}
+  .modal{background:var(--panel);padding:16px;border-radius:10px;width:420px;color:var(--text)}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <h3>Channels</h3>
+      <div class="small muted">PocketBase</div>
+    </div>
+
+    <div id="channelList" class="channels" role="list"></div>
+
+    <div class="channel-create">
+      <input id="newChannelName" class="channel-input" placeholder="new channel name" />
+      <button id="createChannel" class="btn">Create</button>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
+      <div class="small muted" id="channelsCount"></div>
+      <div style="display:flex;gap:6px">
+        <button id="exportBtn" class="ghost btn" title="Export local copy">Export</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <input id="search" class="search" placeholder="Search messages (local)" />
+      <div class="controls">
+        <input id="username" class="username-input" placeholder="Your name" />
+        <div class="badge" id="stats">0 msgs · 0 reacts</div>
+      </div>
+    </div>
+
+    <section class="chat-window" aria-live="polite">
+      <div id="messages" class="messages"></div>
+
+      <div class="composer">
+        <textarea id="composeInput" class="compose-input" placeholder="Message (Enter to send)"></textarea>
+        <div class="compose-actions">
+          <div id="emojiQuick" style="display:flex;gap:6px">
+            <button class="emoji-btn">👍</button>
+            <button class="emoji-btn">❤️</button>
+            <button class="emoji-btn">😂</button>
+            <button class="emoji-btn">😮</button>
+            <button class="emoji-btn">👎</button>
+          </div>
+          <button id="sendBtn" class="btn">Send</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- passcode modal -->
+<div id="passcodeModal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <h3 id="modalTitle">Enter passcode</h3>
+    <div id="setHint" class="muted" style="margin-bottom:8px">Enter the passcode (shared account password)</div>
+    <label>Passcode
+      <input id="passcodeInput" style="width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)" />
+    </label>
+    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="passSubmit" class="btn">OK</button>
+    </div>
+    <div id="passError" class="muted" style="margin-top:8px;color:#e74c3c;display:none"></div>
+  </div>
+</div>
+
+<!-- PocketBase SDK (non-module) -->
+<script src="https://unpkg.com/pocketbase/dist/pocketbase.min.js"></script>
+<script>
+/*
+  CONFIG - EDIT THESE
+  - POCKETBASE_URL: URL where PocketBase is reachable (e.g. http://127.0.0.1:8090)
+  - SHARED_USER_EMAIL: the shared user's email created in PocketBase Admin (passcode is the password)
+*/
+const POCKETBASE_URL = 'http://127.0.0.1:8090'; // <--- change to your PocketBase URL
+const SHARED_USER_EMAIL = 'shared@chat.local';   // <--- change to the shared user email you created
+
+// Collections
+const CHANNELS_COL = 'channels';
+const MESSAGES_COL = 'messages';
+const REACTIONS_COL = 'reactions';
+
+const pb = new PocketBase(POCKETBASE_URL);
+
+let currentChannelId = null;
+let usernameEl = document.getElementById('username');
+let messagesEl = document.getElementById('messages');
+let composeInput = document.getElementById('composeInput');
+let sendBtn = document.getElementById('sendBtn');
+let channelListEl = document.getElementById('channelList');
+let createChannelBtn = document.getElementById('createChannel');
+let newChannelNameEl = document.getElementById('newChannelName');
+let exportBtn = document.getElementById('exportBtn');
+let statsEl = document.getElementById('stats');
+let searchEl = document.getElementById('search');
+
+const passModal = document.getElementById('passcodeModal');
+const passInput = document.getElementById('passcodeInput');
+const passSubmit = document.getElementById('passSubmit');
+const passError = document.getElementById('passError');
+
+(async function init(){
+  // show passcode modal first
+  passModal.style.display = 'flex';
+  passSubmit.onclick = async () => {
+    passError.style.display = 'none';
+    const pass = passInput.value || '';
+    if (!pass) { passError.textContent = 'Passcode required'; passError.style.display='block'; return; }
+    try {
+      await pb.collection('users').authWithPassword(SHARED_USER_EMAIL, pass);
+      passModal.style.display = 'none';
+      setupAfterAuth();
+    } catch(err) {
+      console.error('auth err', err);
+      passError.textContent = 'Incorrect passcode or server error';
+      passError.style.display = 'block';
+    }
+  };
+})();
+
+async function setupAfterAuth(){
+  // restore local username
+  usernameEl.value = localStorage.getItem('chat_pocket_username') || ('User' + Math.floor(Math.random()*10000));
+  localStorage.setItem('chat_pocket_username', usernameEl.value);
+
+  // initial load & subscriptions
+  await subscribeChannels();
+  await ensureDefaultChannelAndSubscribe();
+
+  // UI hooks
+  createChannelBtn.addEventListener('click', async () => {
+    const n = newChannelNameEl.value.trim();
+    if (!n) return alert('enter channel name');
+    await pb.collection(CHANNELS_COL).create({ name: n });
+    newChannelNameEl.value = '';
+  });
+
+  sendBtn.addEventListener('click', async () => {
+    const text = composeInput.value.trim();
+    if (!text) return;
+    await addMessageToCurrentChannel(text);
+    composeInput.value = '';
+  });
+  composeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+  });
+
+  document.querySelectorAll('#emojiQuick .emoji-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      composeInput.value += b.textContent;
+      composeInput.focus();
+    });
+  });
+
+  exportBtn.addEventListener('click', async () => {
+    if (!currentChannelId) return alert('no channel');
+    // fetch messages and reactions for export
+    const msgs = await pb.collection(MESSAGES_COL).getFullList(200, {filter: `channelId = "${currentChannelId}"`, sort: 'timestamp'});
+    const reacts = await pb.collection(REACTIONS_COL).getFullList(200, {filter: `messageId ~ "${currentChannelId}"`}); // best-effort
+    const payload = { channelId: currentChannelId, messages: msgs, reactions: reacts, exportedAt: Date.now() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `channel-${currentChannelId}-export.json`; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  searchEl.addEventListener('input', () => {
+    // re-render messages client-side after last snapshot updated
+    // (we rely on live snapshots to keep messages list)
+  });
+
+  // update counts
+  setInterval(updateStats, 3000);
+  usernameEl.addEventListener('change', () => localStorage.setItem('chat_pocket_username', usernameEl.value || ''));
+}
+
+// ---------- Channels ----------
+let channelsUnsub = null;
+async function subscribeChannels(){
+  // initial fetch
+  const channels = await pb.collection(CHANNELS_COL).getFullList({sort: 'name'});
+  renderChannelList(channels);
+
+  // realtime subscribe
+  channelsUnsub = pb.collection(CHANNELS_COL).subscribe('*', function(e){
+    // on any change, re-fetch full list (simple)
+    pb.collection(CHANNELS_COL).getFullList({sort: 'name'}).then(renderChannelList);
+  });
+}
+
+function renderChannelList(channels){
+  channelListEl.innerHTML = '';
+  channels.forEach(ch => {
+    const btn = document.createElement('button');
+    btn.className = 'channel-btn' + (ch.id === currentChannelId ? ' active' : '');
+    btn.innerHTML = `# ${escapeHtml(ch.name)}`;
+    btn.onclick = async () => {
+      if (currentChannelId === ch.id) return;
+      currentChannelId = ch.id;
+      localStorage.setItem('chat_current_channel_pb', currentChannelId);
+      subscribeMessagesForChannel(currentChannelId);
+      renderChannelList(channels);
+    };
+    // small actions: rename, delete
+    const ren = document.createElement('button'); ren.className='icon-btn'; ren.textContent='✏️';
+    ren.onclick = async (ev) => {
+      ev.stopPropagation();
+      const nn = prompt('Rename channel', ch.name);
+      if (nn && nn.trim()) await pb.collection(CHANNELS_COL).update(ch.id, { name: nn.trim() });
+    };
+    const del = document.createElement('button'); del.className='icon-btn'; del.textContent='🗑️';
+    del.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (!confirm('Delete channel and its messages?')) return;
+      // delete messages in channel
+      const msgs = await pb.collection(MESSAGES_COL).getFullList({filter: `channelId = "${ch.id}"`});
+      for (const m of msgs) {
+        // delete reactions for message
+        const rs = await pb.collection(REACTIONS_COL).getFullList({filter: `messageId = "${m.id}"`});
+        for (const r of rs) await pb.collection(REACTIONS_COL).delete(r.id);
+        await pb.collection(MESSAGES_COL).delete(m.id);
+      }
+      await pb.collection(CHANNELS_COL).delete(ch.id);
+    };
+    const actions = document.createElement('div'); actions.style.marginLeft='auto'; actions.appendChild(ren); actions.appendChild(del);
+    btn.appendChild(actions);
+    channelListEl.appendChild(btn);
+  });
+  document.getElementById('channelsCount').textContent = `${channels.length} channel${channels.length===1?'':'s'}`;
+}
+
+// ---------- Messages realtime ----------
+let messagesSub = null;
+async function ensureDefaultChannelAndSubscribe(){
+  const channels = await pb.collection(CHANNELS_COL).getFullList({sort: 'name'});
+  if (!channels || channels.length === 0) {
+    const c = await pb.collection(CHANNELS_COL).create({ name: 'general' });
+    currentChannelId = c.id;
+    subscribeMessagesForChannel(c.id);
+  } else {
+    const saved = localStorage.getItem('chat_current_channel_pb');
+    currentChannelId = saved || channels[0].id;
+    subscribeMessagesForChannel(currentChannelId);
+  }
+}
+
+async function subscribeMessagesForChannel(channelId){
+  if (messagesSub) pb.collection(MESSAGES_COL).unsubscribe(messagesSub);
+  messagesEl.innerHTML = '<div class="muted">Loading…</div>';
+  // fetch initial messages for channel
+  const msgs = await pb.collection(MESSAGES_COL).getFullList({filter: `channelId = "${channelId}"`, sort: 'timestamp'});
+  await renderMessagesWithReactions(msgs);
+
+  // subscribe for realtime changes on messages
+  messagesSub = pb.collection(MESSAGES_COL).subscribe('*', async (e) => {
+    // If the changed record is for current channel, fetch recent set and render
+    if (!e.record) return;
+    if (e.record.channelId === currentChannelId) {
+      const all = await pb.collection(MESSAGES_COL).getFullList({filter: `channelId = "${currentChannelId}"`, sort: 'timestamp'});
+      await renderMessagesWithReactions(all);
+    } else {
+      // ignore or update other channels if you like
+    }
+  });
+}
+
+async function renderMessagesWithReactions(messages){
+  // fetch reactions for the set of messages (getFullList then filter)
+  const reactions = await pb.collection(REACTIONS_COL).getFullList();
+  const byMsg = {};
+  reactions.forEach(r => {
+    if (!byMsg[r.messageId]) byMsg[r.messageId] = [];
+    byMsg[r.messageId].push(r);
+  });
+
+  messagesEl.innerHTML = '';
+  const q = searchEl.value && searchEl.value.trim().toLowerCase();
+  const filtered = q ? messages.filter(m => (m.text||'').toLowerCase().includes(q) || (m.username||'').toLowerCase().includes(q)) : messages;
+
+  for (const m of filtered){
+    const node = document.createElement('div'); node.className = 'message'; node.dataset.id = m.id;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.innerHTML = `<strong style="color:var(--text)">${escapeHtml(m.username)}</strong>`;
+    const t = document.createElement('span'); t.className='time'; t.textContent = new Date(m.timestamp).toLocaleString(); meta.appendChild(t);
+    if (m.editedAt) { const ed = document.createElement('span'); ed.className='edited'; ed.textContent='edited'; meta.appendChild(ed); }
+
+    const actions = document.createElement('div'); actions.className='message-actions';
+    const authUserId = pb.authStore.model?.id;
+    if (m.userId && authUserId && m.userId === authUserId) {
+      const editBtn = document.createElement('button'); editBtn.className='icon-btn'; editBtn.textContent='✏️';
+      editBtn.onclick = () => openEditUI(m);
+      const delBtn = document.createElement('button'); delBtn.className='icon-btn'; delBtn.textContent='🗑️';
+      delBtn.onclick = async () => {
+        if (!confirm('Delete?')) return;
+        // delete reactions for msg
+        const rs = await pb.collection(REACTIONS_COL).getFullList({filter:`messageId = "${m.id}"`});
+        for (const r of rs) await pb.collection(REACTIONS_COL).delete(r.id);
+        await pb.collection(MESSAGES_COL).delete(m.id);
+      };
+      actions.appendChild(editBtn); actions.appendChild(delBtn);
+    }
+    node.appendChild(actions);
+
+    const textDiv = document.createElement('div'); textDiv.className='text'; textDiv.textContent = m.text || '';
+    node.appendChild(meta); node.appendChild(textDiv);
+
+    const reactionsDiv = document.createElement('div'); reactionsDiv.className='reactions';
+    const rs = byMsg[m.id] || [];
+    const summary = makeReactionSummaryList(rs);
+    for (const s of summary) {
+      const chip = document.createElement('button'); chip.className='reaction-chip';
+      const authId = pb.authStore.model?.id;
+      if (s.users.some(u => u.userId === authId)) chip.classList.add('self');
+      chip.innerHTML = `<span class="emoji">${escapeHtml(s.emoji)}</span><span class="count">${s.count}</span>`;
+      chip.title = s.users.map(u => u.username || 'User').join(', ');
+      chip.onclick = async () => { await toggleReaction(m.id, s.emoji); };
+      reactionsDiv.appendChild(chip);
+    }
+    const picker = document.createElement('button'); picker.className='reaction-chip'; picker.textContent = '+'; picker.title='Add reaction';
+    picker.onclick = (ev) => { ev.stopPropagation(); showEmojiPickerAt(ev.currentTarget, m.id); };
+    reactionsDiv.appendChild(picker);
+
+    node.appendChild(reactionsDiv);
+    messagesEl.appendChild(node);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function makeReactionSummaryList(reactions){
+  const map = new Map();
+  for (const r of reactions){
+    if (!map.has(r.emoji)) map.set(r.emoji, { emoji: r.emoji, count: 0, users: [] });
+    const v = map.get(r.emoji);
+    v.count += 1;
+    v.users.push({ userId: r.userId, username: r.username });
+  }
+  return Array.from(map.values());
+}
+
+// ---------- create/edit messages ----------
+async function addMessageToCurrentChannel(text){
+  if (!currentChannelId) return alert('no channel');
+  const userId = pb.authStore.model?.id || '';
+  const username = getUsername();
+  await pb.collection(MESSAGES_COL).create({ channelId: currentChannelId, userId, username, text, timestamp: Date.now() });
+}
+
+async function editMessage(msgId, newText){
+  await pb.collection(MESSAGES_COL).update(msgId, { text: newText, editedAt: Date.now() });
+}
+
+function openEditUI(message){
+  const node = messagesEl.querySelector(`[data-id="${message.id}"]`);
+  if (!node) return;
+  const textDiv = node.querySelector('.text');
+  const ta = document.createElement('textarea'); ta.style.width='100%'; ta.style.minHeight='64px'; ta.value = message.text || '';
+  const save = document.createElement('button'); save.className='btn'; save.textContent='Save';
+  const cancel = document.createElement('button'); cancel.className='ghost btn'; cancel.textContent='Cancel';
+  const ctrl = document.createElement('div'); ctrl.style.display='flex'; ctrl.style.gap='8px'; ctrl.style.marginTop='8px';
+  ctrl.appendChild(save); ctrl.appendChild(cancel);
+  textDiv.innerHTML=''; textDiv.appendChild(ta); textDiv.appendChild(ctrl);
+  save.onclick = async () => {
+    const v = ta.value.trim(); if (!v) return alert('empty');
+    await editMessage(message.id, v);
+  };
+  cancel.onclick = () => { /* will be refreshed by realtime update */ };
+}
+
+// ---------- reactions ----------
+async function toggleReaction(messageId, emoji){
+  const userId = pb.authStore.model?.id || '';
+  const username = getUsername();
+  if (!userId) return alert('not signed in');
+  // find existing reaction by this user for this message+emoji
+  const list = await pb.collection(REACTIONS_COL).getFullList({filter: `messageId = "${messageId}" && emoji = "${escapeQuotes(emoji)}" && userId = "${userId}"`});
+  if (list.length > 0) {
+    // delete first
+    await pb.collection(REACTIONS_COL).delete(list[0].id);
+  } else {
+    await pb.collection(REACTIONS_COL).create({ messageId, emoji, userId, username, timestamp: Date.now() });
+  }
+}
+
+// ---------- emoji picker ----------
+const EMOJI_SET = ['👍','❤️','😂','😮','😢','👏','🔥','🎉','😅','🤔','🤝','👀','✨','❗','❌'];
+let emojiPickerEl = null;
+function showEmojiPickerAt(targetEl, messageId){
+  hideEmojiPicker();
+  emojiPickerEl = document.createElement('div');
+  emojiPickerEl.style.position='absolute';
+  emojiPickerEl.style.zIndex='9999';
+  emojiPickerEl.style.background='#0f1316';
+  emojiPickerEl.style.padding='8px';
+  emojiPickerEl.style.borderRadius='8px';
+  emojiPickerEl.style.display='flex';
+  emojiPickerEl.style.gap='6px';
+  emojiPickerEl.style.boxShadow='0 6px 20px rgba(0,0,0,0.6)';
+  for (const e of EMOJI_SET){
+    const b = document.createElement('button'); b.className='emoji-btn'; b.textContent = e;
+    b.onclick = async (ev) => { ev.stopPropagation(); await toggleReaction(messageId, e); hideEmojiPicker(); };
+    emojiPickerEl.appendChild(b);
+  }
+  document.body.appendChild(emojiPickerEl);
+  const rect = targetEl.getBoundingClientRect();
+  emojiPickerEl.style.left = `${rect.left}px`;
+  emojiPickerEl.style.top = `${rect.bottom + 6}px`;
+  setTimeout(()=>document.addEventListener('click', hideEmojiPickerOnce), 0);
+}
+function hideEmojiPicker(){ if (emojiPickerEl) { emojiPickerEl.remove(); emojiPickerEl=null; document.removeEventListener('click', hideEmojiPickerOnce); } }
+function hideEmojiPickerOnce(e){ if (!emojiPickerEl) return; if (!emojiPickerEl.contains(e.target)) hideEmojiPicker(); }
+
+// ---------- helpers ----------
+function escapeHtml(s=''){ return (s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeQuotes(s=''){ return (s+'').replace(/"/g,'\\"'); }
+
+function getUsername(){
+  const v = (usernameEl.value || '').trim();
+  if (v) return v;
+  const s = localStorage.getItem('chat_pocket_username') || '';
+  if (s) return s;
+  const auto = 'User' + Math.floor(Math.random()*10000);
+  usernameEl.value = auto; localStorage.setItem('chat_pocket_username', auto); return auto;
+}
+
+async function updateStats(){
+  const msgs = await pb.collection(MESSAGES_COL).getFullList();
+  const reacts = await pb.collection(REACTIONS_COL).getFullList();
+  statsEl.textContent = `${msgs.length} msgs · ${reacts.length} reacts`;
+}
+</script>
+</body>
+</html>

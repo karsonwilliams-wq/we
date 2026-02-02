@@ -1,0 +1,394 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Chat (Render) — Channels & Realtime</title>
+<style>
+:root{--bg:#0b0d0f;--panel:#0f1316;--muted:#97a0a8;--accent:#5865f2;--card:#111316;--text:#e6eef3;--muted-2:#8b98a3}
+*{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text)}
+.app{display:grid;grid-template-columns:220px 1fr;gap:12px;height:100vh;padding:12px}
+.sidebar{background:var(--panel);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:12px}
+.channels{display:flex;flex-direction:column;gap:6px;overflow:auto}
+.channel-btn{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:transparent;border:none;color:var(--muted);cursor:pointer;text-align:left}
+.channel-btn.active{background:linear-gradient(90deg,rgba(88,101,242,0.12),transparent);color:var(--text);border:1px solid rgba(88,101,242,0.12)}
+.channel-create{display:flex;gap:8px}
+.channel-input{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+.btn{background:var(--accent);color:white;border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+.main{display:flex;flex-direction:column;gap:12px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.search{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+.username-input{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+.chat-window{flex:1;display:flex;flex-direction:column;background:var(--card);border-radius:10px;overflow:hidden}
+.messages{padding:14px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:10px}
+.message{padding:10px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);display:flex;flex-direction:column;gap:8px;position:relative}
+.meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:.85rem}
+.meta .time{margin-left:auto;color:var(--muted-2);font-size:.8rem}
+.text{white-space:pre-wrap;color:var(--text);font-size:1rem}
+.edited{color:var(--muted-2);font-size:.8rem;margin-left:6px}
+.message-actions{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+.icon-btn{background:transparent;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:6px}
+.icon-btn:hover{color:var(--text);background:rgba(255,255,255,0.02)}
+.reactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.reaction-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;background:rgba(255,255,255,0.02);color:var(--text);font-size:.95rem;cursor:pointer;border:1px solid rgba(255,255,255,0.02)}
+.reaction-chip.self{outline:2px solid rgba(88,101,242,0.18)}
+.reaction-chip .count{opacity:.9;color:var(--muted-2);font-size:.85rem;margin-left:4px}
+.composer{padding:12px;border-top:1px solid rgba(255,255,255,0.02);display:flex;gap:8px;align-items:center}
+.compose-input{flex:1;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text);min-height:44px}
+.badge{background:rgba(255,255,255,0.03);color:var(--muted);padding:6px 8px;border-radius:999px;font-size:.85rem}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:999}
+.modal{background:var(--panel);padding:16px;border-radius:10px;width:420px;color:var(--text)}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <h3 style="margin:0">Channels</h3>
+      <div class="small muted">Shared chat</div>
+    </div>
+
+    <div id="channelList" class="channels"></div>
+
+    <div class="channel-create">
+      <input id="newChannelName" class="channel-input" placeholder="new channel name" />
+      <button id="createChannel" class="btn">Create</button>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
+      <div class="small muted" id="channelsCount"></div>
+      <div style="display:flex;gap:6px">
+        <button id="exportBtn" class="ghost btn" title="Export current channel">Export</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <input id="search" class="search" placeholder="Search (local)" />
+      <div class="controls">
+        <input id="username" class="username-input" placeholder="Your name" />
+        <div class="badge" id="stats">0 msgs</div>
+      </div>
+    </div>
+
+    <section class="chat-window">
+      <div id="messages" class="messages"></div>
+
+      <div class="composer">
+        <textarea id="composeInput" class="compose-input" placeholder="Message (Enter to send)"></textarea>
+        <div class="compose-actions">
+          <div id="emojiQuick" style="display:flex;gap:6px">
+            <button class="emoji-btn">👍</button>
+            <button class="emoji-btn">❤️</button>
+            <button class="emoji-btn">😂</button>
+            <button class="emoji-btn">😮</button>
+            <button class="emoji-btn">👎</button>
+          </div>
+          <button id="sendBtn" class="btn">Send</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- passcode modal -->
+<div id="passcodeModal" class="modal-backdrop" style="display:none">
+  <div class="modal">
+    <h3 id="modalTitle">Enter passcode</h3>
+    <div id="setHint" class="muted" style="margin-bottom:8px">Enter the shared passcode to join.</div>
+    <label>Display name
+      <input id="nameInput" style="width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)" />
+    </label>
+    <label style="margin-top:8px">Passcode
+      <input id="passInput" type="password" style="width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)" />
+    </label>
+    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+      <button id="passSubmit" class="btn">Join</button>
+    </div>
+    <div id="passError" class="muted" style="margin-top:8px;color:#e74c3c;display:none"></div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+/* Client for the Render chat server.
+   - Opens a socket after login (session cookie)
+   - Supports channels, reactions, edit/delete (only author)
+*/
+
+const channelListEl = document.getElementById('channelList');
+const channelsCountEl = document.getElementById('channelsCount');
+const newChannelNameEl = document.getElementById('newChannelName');
+const createChannelBtn = document.getElementById('createChannel');
+const messagesEl = document.getElementById('messages');
+const usernameEl = document.getElementById('username');
+const composeInput = document.getElementById('composeInput');
+const sendBtn = document.getElementById('sendBtn');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('search');
+const exportBtn = document.getElementById('exportBtn');
+
+const passModal = document.getElementById('passcodeModal');
+const passInput = document.getElementById('passInput');
+const nameInput = document.getElementById('nameInput');
+const passSubmit = document.getElementById('passSubmit');
+const passError = document.getElementById('passError');
+
+let socket = null;
+let currentChannelId = null;
+let session = { authed:false, userId: null, username: null };
+
+async function init(){
+  // show modal until logged in
+  passModal.style.display = 'flex';
+  passSubmit.onclick = async () => {
+    passError.style.display = 'none';
+    const pass = passInput.value || '';
+    const name = nameInput.value || '';
+    if (!pass) { passError.textContent='Passcode required'; passError.style.display='block'; return; }
+    try {
+      const resp = await fetch('/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({passcode: pass, username: name})});
+      const j = await resp.json();
+      if (!resp.ok) throw new Error('auth failed');
+      session = { authed:true, userId: j.userId, username: j.username };
+      localStorage.setItem('chat_name', j.username);
+      usernameEl.value = j.username;
+      passModal.style.display = 'none';
+      await bootRealtime();
+      await loadChannels();
+      await ensureDefaultChannel();
+    } catch(err) {
+      passError.textContent = 'Incorrect passcode or server error';
+      passError.style.display = 'block';
+      console.error(err);
+    }
+  };
+}
+
+async function bootRealtime(){
+  socket = io();
+  socket.on('connect_error', (err) => console.error('socket connect error', err));
+  socket.on('connect', () => {
+    console.log('socket connected');
+    if (currentChannelId) socket.emit('join_channel', currentChannelId);
+  });
+  socket.on('new_message', (m) => {
+    if (m.channel_id === currentChannelId) appendMessage(m);
+    updateCounts();
+  });
+  socket.on('reaction_added', (r) => {
+    refreshMessagesForChannel(currentChannelId);
+  });
+  socket.on('reaction_removed', (r) => {
+    refreshMessagesForChannel(currentChannelId);
+  });
+  socket.on('message_edited', (m) => {
+    refreshMessagesForChannel(m.channel_id || currentChannelId);
+  });
+  socket.on('message_deleted', (d) => {
+    refreshMessagesForChannel(currentChannelId);
+  });
+}
+
+async function loadChannels(){
+  const resp = await fetch('/api/channels');
+  if (!resp.ok) return;
+  const j = await resp.json();
+  renderChannels(j.channels);
+}
+
+function renderChannels(channels){
+  channelListEl.innerHTML = '';
+  channels.forEach(ch => {
+    const btn = document.createElement('button');
+    btn.className = 'channel-btn' + (ch.id === currentChannelId ? ' active' : '');
+    btn.textContent = '# ' + ch.name;
+    btn.onclick = async () => {
+      if (currentChannelId === ch.id) return;
+      currentChannelId = ch.id;
+      if (socket) socket.emit('join_channel', currentChannelId);
+      await refreshMessagesForChannel(currentChannelId);
+      renderChannels(channels);
+    };
+    channelListEl.appendChild(btn);
+  });
+  channelsCountEl.textContent = `${channels.length} channel${channels.length===1?'':'s'}`;
+}
+
+createChannelBtn.addEventListener('click', async () => {
+  const name = newChannelNameEl.value.trim();
+  if (!name) return alert('enter name');
+  const resp = await fetch('/api/channels', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name })});
+  if (resp.ok) {
+    newChannelNameEl.value = '';
+    loadChannels();
+  } else {
+    alert('failed to create');
+  }
+});
+
+async function ensureDefaultChannel(){
+  const chs = await fetch('/api/channels').then(r=>r.json()).then(j=>j.channels);
+  if (!chs || chs.length === 0) {
+    await fetch('/api/channels', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:'general' })});
+    await loadChannels();
+    const chs2 = await fetch('/api/channels').then(r=>r.json()).then(j=>j.channels);
+    currentChannelId = chs2[0].id;
+  } else {
+    const saved = localStorage.getItem('chat_current_channel');
+    currentChannelId = saved ? Number(saved) : chs[0].id;
+  }
+  if (socket) socket.emit('join_channel', currentChannelId);
+  await refreshMessagesForChannel(currentChannelId);
+}
+
+async function refreshMessagesForChannel(channelId){
+  if (!channelId) return;
+  localStorage.setItem('chat_current_channel', String(channelId));
+  const resp = await fetch('/api/messages/' + channelId);
+  if (!resp.ok) return;
+  const j = await resp.json();
+  renderMessages(j.messages || []);
+}
+
+function renderMessages(messages){
+  messagesEl.innerHTML = '';
+  const q = searchEl.value && searchEl.value.trim().toLowerCase();
+  const filtered = q ? messages.filter(m => (m.text||'').toLowerCase().includes(q) || (m.username||'').toLowerCase().includes(q)) : messages;
+  filtered.forEach(m => appendMessage(m));
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  updateCounts();
+}
+
+function appendMessage(m){
+  // avoid duplicates
+  if (messagesEl.querySelector(`[data-id="${m.id}"]`)) return;
+  const node = document.createElement('div'); node.className = 'message'; node.dataset.id = m.id;
+  const meta = document.createElement('div'); meta.className='meta';
+  meta.innerHTML = `<strong style="color:var(--text)">${escapeHtml(m.username)}</strong>`;
+  const tm = document.createElement('span'); tm.className='time'; tm.textContent = new Date(m.timestamp).toLocaleString(); meta.appendChild(tm);
+  if (m.edited_at) { const ed = document.createElement('span'); ed.className='edited'; ed.textContent='edited'; meta.appendChild(ed); }
+  const actions = document.createElement('div'); actions.className='message-actions';
+  if (session.userId && m.user_id === session.userId) {
+    const editBtn = document.createElement('button'); editBtn.className='icon-btn'; editBtn.textContent='✏️';
+    editBtn.onclick = () => openEditUI(m);
+    const delBtn = document.createElement('button'); delBtn.className='icon-btn'; delBtn.textContent='🗑️';
+    delBtn.onclick = async () => {
+      if (!confirm('Delete message?')) return;
+      socket.emit('delete_message', { messageId: m.id });
+    };
+    actions.appendChild(editBtn); actions.appendChild(delBtn);
+  }
+  node.appendChild(actions);
+  const textDiv = document.createElement('div'); textDiv.className='text'; textDiv.textContent = m.text || '';
+  node.appendChild(meta); node.appendChild(textDiv);
+
+  const rx = document.createElement('div'); rx.className='reactions';
+  const summary = summarizeReactions(m.reactions || []);
+  for (const s of summary) {
+    const chip = document.createElement('button'); chip.className='reaction-chip';
+    if (s.users.includes(session.userId)) chip.classList.add('self');
+    chip.innerHTML = `<span class="emoji">${escapeHtml(s.emoji)}</span><span class="count">${s.count}</span>`;
+    chip.title = s.users.join(', ');
+    chip.onclick = () => socket.emit('toggle_reaction', { messageId: m.id, emoji: s.emoji });
+    rx.appendChild(chip);
+  }
+  const plus = document.createElement('button'); plus.className='reaction-chip'; plus.textContent = '+'; plus.onclick = (ev) => { ev.stopPropagation(); showEmojiPickerAt(ev.currentTarget, m.id); };
+  rx.appendChild(plus);
+  node.appendChild(rx);
+
+  messagesEl.appendChild(node);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function summarizeReactions(reactions){
+  const map = {};
+  reactions.forEach(r => {
+    if (!map[r.emoji]) map[r.emoji] = { emoji: r.emoji, count:0, users: [] };
+    map[r.emoji].count += 1;
+    map[r.emoji].users.push(r.user_id);
+  });
+  return Object.values(map);
+}
+
+function escapeHtml(s=''){ return (s+'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function openEditUI(m){
+  const node = messagesEl.querySelector(`[data-id="${m.id}"]`);
+  if (!node) return;
+  const textDiv = node.querySelector('.text');
+  const ta = document.createElement('textarea'); ta.style.width='100%'; ta.style.minHeight='64px'; ta.value = m.text || '';
+  const save = document.createElement('button'); save.className='btn'; save.textContent='Save';
+  const cancel = document.createElement('button'); cancel.className='ghost btn'; cancel.textContent='Cancel';
+  const ctrl = document.createElement('div'); ctrl.style.display='flex'; ctrl.style.gap='8px'; ctrl.style.marginTop='8px';
+  ctrl.appendChild(save); ctrl.appendChild(cancel);
+  textDiv.innerHTML=''; textDiv.appendChild(ta); textDiv.appendChild(ctrl);
+  save.onclick = () => {
+    const v = ta.value.trim();
+    if (!v) return alert('empty');
+    socket.emit('edit_message', { messageId: m.id, newText: v });
+  };
+  cancel.onclick = () => refreshMessagesForChannel(currentChannelId);
+}
+
+document.querySelectorAll('#emojiQuick .emoji-btn').forEach(b => b.addEventListener('click', () => { composeInput.value += b.textContent; composeInput.focus(); }));
+
+sendBtn.addEventListener('click', async () => {
+  const text = composeInput.value.trim();
+  if (!text) return;
+  socket.emit('send_message', { channelId: currentChannelId, text });
+  composeInput.value = '';
+});
+
+composeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+});
+
+function showEmojiPickerAt(target, messageId){
+  const existing = document.getElementById('emoji-picker');
+  if (existing) existing.remove();
+  const p = document.createElement('div'); p.id='emoji-picker'; p.style.position='absolute'; p.style.background='#0f1316'; p.style.padding='8px'; p.style.borderRadius='8px'; p.style.display='flex'; p.style.gap='6px';
+  const EMOJI = ['👍','❤️','😂','😮','😢','👏','🔥','🎉','✨','❗'];
+  EMOJI.forEach(e => {
+    const b = document.createElement('button'); b.textContent = e; b.className='emoji-btn';
+    b.onclick = () => { socket.emit('toggle_reaction', { messageId, emoji: e }); p.remove(); };
+    p.appendChild(b);
+  });
+  document.body.appendChild(p);
+  const rect = target.getBoundingClientRect(); p.style.left = rect.left + 'px'; p.style.top = (rect.bottom + 6) + 'px';
+  setTimeout(()=>document.addEventListener('click', ()=>p.remove(), { once:true }), 0);
+}
+
+function updateCounts(){
+  // lightweight: count messages rendered
+  statsEl.textContent = messagesEl.querySelectorAll('.message').length + ' msgs';
+}
+
+async function refreshMessagesForChannel(cid){
+  if (!cid) return;
+  const resp = await fetch('/api/messages/' + cid);
+  if (!resp.ok) return;
+  const j = await resp.json();
+  renderMessages(j.messages || []);
+}
+
+// export current channel messages
+exportBtn.addEventListener('click', async () => {
+  if (!currentChannelId) return alert('no channel selected');
+  const resp = await fetch('/api/messages/' + currentChannelId);
+  if (!resp.ok) return alert('export failed');
+  const j = await resp.json();
+  const blob = new Blob([JSON.stringify({ exportedAt: Date.now(), channelId: currentChannelId, messages: j.messages }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `channel-${currentChannelId}.json`; a.click(); URL.revokeObjectURL(url);
+});
+
+// startup
+init();
+</script>
+</body>
+</html>

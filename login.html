@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Chat — Login</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="centered">
+    <h1>Enter passcode to join</h1>
+    <form method="POST" action="/login" class="login-form">
+      <label>
+        Display name
+        <input name="username" placeholder="Your name (optional)" />
+      </label>
+      <label>
+        Passcode
+        <input name="passcode" type="password" required />
+      </label>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button type="submit">Enter chat</button>
+      </div>
+    </form>
+    <p style="font-size:0.9em; color:#666;">The passcode is checked server-side and stored only as an env variable on the server.</p>
+  </main>
+</body>
+</html>
